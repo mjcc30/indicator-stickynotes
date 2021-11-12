@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License along with
 # indicator-stickynotes.  If not, see <http://www.gnu.org/licenses/>.
 
-from stickynotes.backend import Note, NoteSet
+from stickynotes.backend import NoteSet
 from stickynotes.gui import *
 import stickynotes.info
 from stickynotes.info import MO_DIR, LOCALE_DOMAIN
@@ -26,7 +26,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('GtkSource', '3.0')
 gi.require_version('AppIndicator3', '0.1')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, GLib
 from gi.repository import AppIndicator3 as appindicator
 
 import os.path
@@ -35,6 +35,7 @@ import argparse
 from locale import gettext as _
 from functools import wraps
 from shutil import copyfile, SameFileError
+import signal #needed to send signal if another process is running
 
 import socket
 import sys
@@ -248,9 +249,41 @@ class IndicatorStickyNotes:
 
     def show_settings(self, *args):
         wSettings = SettingsDialog(self.nset)
+        SettingsDialog(self.nset)
 
     def save(self):
         self.nset.save()
+
+def handler(indicator):
+    indicator.showall() 
+    # really don't know why there's a need to do this
+    install_glib_handler(indicator, signal.SIGUSR1)
+
+    # this will be a way to switch between notes using the same shortcut...
+    #nnote = len(indicator.nset.notes)
+    #current_note = (indicator.nset.current_note+1)%nnote
+    #indicator.nset.notes[current_note].show()
+    #indicator.nset.current_note = current_note
+
+def reload_handler(indicator):
+    # reload from data file on SIGUSR2
+    with open(os.path.expanduser(indicator.data_file), encoding="utf-8") as fsock:
+        indicator.nset.merge(fsock.read())
+    install_glib_handler(indicator, signal.SIGUSR2)
+
+def install_glib_handler(indicator, sig=None):
+    unix_signal_add = None
+    if hasattr(GLib, "unix_signal_add"):
+        unix_signal_add = GLib.unix_signal_add
+    elif hasattr(GLib, "unix_signal_add_full"):
+        unix_signal_add = GLib.unix_signal_add_full
+
+    if unix_signal_add:
+        if not sig or sig==signal.SIGUSR1:
+            unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGUSR1, handler, indicator)
+        if not sig or sig==signal.SIGUSR2:
+            unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGUSR2, reload_handler, indicator)
+
 
 def main():
     # Avoid duplicate process
@@ -283,8 +316,79 @@ def main():
     indicator = IndicatorStickyNotes(args)
     # Load global css for the first time.
     load_global_css()
+    
+    GLib.idle_add(install_glib_handler, indicator, priority=GLib.PRIORITY_HIGH)
+    
     Gtk.main()
     indicator.save()
+    
+def is_running():
+    """ Check if indicator-stickynotes is already running
+        and return PID in case, False elsewhere """
+    from fcntl import flock, LOCK_EX, LOCK_NB
+    global pid_fd #we need the pid_fd global to keep flock on it
+
+    # open PID/LOCK file
+    pid_fd = os.fdopen(os.open('/tmp/indicator-stickynotes.pid', os.O_CREAT|os.O_RDWR), "r+")
+    try:
+        flock( pid_fd, LOCK_EX|LOCK_NB )
+        pid_fd.truncate()
+        pid_fd.write("%d" % os.getpid())
+        pid_fd.flush()
+        return False
+    except:
+        pid_fd.seek(0)
+        pid = pid_fd.readline()
+        pid = int(pid)
+        pid_fd.close()
+        return pid
 
 if __name__ == "__main__":
-    main()
+        import sys
+
+    parser = argparse.ArgumentParser(description=_("Sticky Notes"),
+            usage = "%(prog)s [-k | -r | [[-c CATEGORY] " +
+                    "(-i INPUTFILE | -n STRING ...)] | -d]")
+
+    parser.add_argument("-k","--kill", action="store_true",
+            help="kill background proccess")
+    parser.add_argument("-r","--refresh", action="store_true",
+            help="refresh data")
+    parser.add_argument("-c","--category", nargs=1, default=[''],
+            help="using with [-n|-i ...], set categeory", type=str)
+    parser.add_argument("-i","--infile", type=argparse.FileType('r'),
+            help="new sticky note with content from a file")
+    parser.add_argument("-n","--new", metavar='NEW_NOTE', nargs='+',
+            help="create a new note")
+    parser.add_argument("--no-daemon", action="store_true",
+            help="do not daemonize")
+    parser.add_argument("-d", action='store_true',
+            help="use the development data file")
+    args = parser.parse_args()
+
+    if args.new or args.infile: # create a new note if required
+        args.refresh=True
+        noteset=NoteSet(indicator=None, gui_class=None,
+            data_file=stickynotes.info.DEBUG_SETTINGS_FILE if args.d        \
+                else stickynotes.info.SETTINGS_FILE)
+        try: noteset.open()
+        except Exception as e:
+            print('failed to load config file')
+            sys.exit(1)
+        notebody = ' '.join(args.new).encode().decode('unicode-escape')     \
+            .encode('latin1').decode('utf-8') if args.new                   \
+            else args.infile.read().rstrip()
+        noteset.new(notebody=notebody, category=args.category[0])
+        noteset.save()
+
+    pid = is_running()
+    if pid:
+        if   args.kill:     sig = signal.SIGKILL
+        elif args.refresh:  sig = signal.SIGUSR2
+        else:               sig = signal.SIGUSR1
+        # send signal to the existing process accordingly
+        os.kill(pid, sig)
+    elif not (args.kill or args.refresh):
+        main()   # run
+
+    sys.exit(0)
