@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License along with
 # indicator-stickynotes.  If not, see <http://www.gnu.org/licenses/>.
 
-from datetime import datetime
 from string import Template
 import gi
 gi.require_version("Gtk", "3.0")
@@ -67,11 +66,13 @@ class StickyNote:
         # Get necessary objects
         widgets = ["txtNote", "bAdd", "imgAdd", "imgResizeR", "eResizeR",
                 "bLock", "imgLock", "imgUnlock", "imgClose", "imgDropdown",
-                "bClose", "confirmDelete", "movebox1", "movebox2"]
+                "bClose", "confirmDelete", "movebox2", "movebox2"]
         for w in widgets:
             setattr(self, w, self.builder.get_object(w))
         self.style_contexts = [self.winMain.get_style_context(),
                 self.txtNote.get_style_context()]
+        self.eTitle.set_text(self.note.title)
+￼       self.winMain.set_title(self.note.title)
         # Update window-specific style. Global styles are loaded initially!
         self.update_style()
         self.update_font()
@@ -83,7 +84,7 @@ class StickyNote:
         self.bbody.begin_not_undoable_action()
         # add note body to buffer 
         # searching for URLs and adding tags accordlying
-        self.bbody.set_text(self.note.body)
+        self.set_text(self.note.body)
         # adding markdown syntax highlight
         language_manager = GtkSource.LanguageManager()
         self.bbody.set_language(language_manager.get_language('markdown'))
@@ -341,13 +342,16 @@ class StickyNote:
         return False
 
     def delete(self, *args):
-        winConfirm = Gtk.MessageDialog(self.winMain, None,
-                Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
-                _("Are you sure you want to delete this note?"))
-        winConfirm.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.REJECT,
-                Gtk.STOCK_DELETE, Gtk.ResponseType.ACCEPT)
-        confirm = winConfirm.run()
-        winConfirm.destroy()
+        if self.bbody.get_char_count(): # ask for only non-empty notes
+            winConfirm = Gtk.MessageDialog(self.winMain, None,
+                    Gtk.MessageType.QUESTION, Gtk.ButtonsType.NONE,
+                    _("Are you sure you want to delete this note?"))
+            winConfirm.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.REJECT,
+                    Gtk.STOCK_DELETE, Gtk.ResponseType.ACCEPT)
+            confirm = winConfirm.run()
+            winConfirm.destroy()
+        else: confirm = Gtk.ResponseType.ACCEPT
+        
         if confirm == Gtk.ResponseType.ACCEPT:
             self.note.delete()
             self.winMain.destroy()
