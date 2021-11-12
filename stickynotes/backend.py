@@ -30,6 +30,7 @@ class Note:
         content = content or {}
         self.uuid = content.get('uuid')
         self.body = content.get('body','')
+        self.title = content.get('title','')
         self.properties = content.get("properties", {})
         self.category = category or content.get("cat", "")
         if not self.category in self.noteset.categories:
@@ -52,12 +53,16 @@ class Note:
         return {"uuid":self.uuid, "body":self.body,
                 "last_modified":self.last_modified.strftime(
                     "%Y-%m-%dT%H:%M:%S"), "properties":self.properties,
-                "cat": self.category}
+                "cat": self.category, "title": self.title}
 
-    def update(self,body=None):
+    def update(self,body=None,title=None):
         if not body == None:
             self.body = body
             self.last_modified = datetime.now()
+   
+        if not title == None:
+￼            self.title = title
+￼            self.last_modified = datetime.now()
 
     def delete(self):
         self.noteset.notes.remove(self)
@@ -141,12 +146,15 @@ class NoteSet:
             if "uuid" in newnote and newnote["uuid"] in dnotes:
                 # Update notes that are already in the noteset
                 orignote = dnotes[newnote["uuid"]]
-                if "body" in newnote:
-                    orignote.body = newnote["body"]
-                if "properties" in newnote:
-                    orignote.properties = newnote["properties"]
-                if "cat" in newnote:
-                    orignote.category = newnote["cat"]
+                # make sure it's an 'Update'
+                if datetime.strptime(newnote["last_modified"],      \
+                        "%Y-%m-%dT%H:%M:%S") > orignote.last_modified:
+                    if "body" in newnote:
+                        orignote.body = newnote["body"]
+                    if "properties" in newnote:
+                        orignote.properties = newnote["properties"]
+                    if "cat" in newnote:
+                        orignote.category = newnote["cat"]
             else:
                 # otherwise create a new note
                 if "uuid" in newnote:
@@ -159,12 +167,30 @@ class NoteSet:
         self.notes = list(dnotes.values())
         self.showall(reload_from_backend=True)
 
-    def new(self):
+
+    def find_category(self, name=""):
+        # return cid of the first matched category
+        if name:
+            try: cid = (cat for cat in self.categories if \
+                    self.categories[cat]["name"] == name).__next__()
+            # not found
+            except Exception: cid = None
+        else:
+            cid = None
+        return cid
+
+    def new(self, notebody='', category=''):
         """Creates a new note and adds it to the note set"""
+        cid = self.find_category(name=category)
+        if category and not cid:
+            cid = str(uuid.uuid4())
+            self.categories[cid]={'name':category}
         note = Note(gui_class=self.gui_class, noteset=self,
-                category=self.properties.get("default_cat", ""))
+                category=cid)
+        note.body=notebody
+        note.set_locked_state(not not notebody)
         self.notes.append(note)
-        note.show()
+        self.gui_class and note.show()      # show if created with gui
         return note
 
     def showall(self, *args, **kwargs):
