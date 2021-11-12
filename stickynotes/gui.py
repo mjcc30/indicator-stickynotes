@@ -81,10 +81,17 @@ class StickyNote:
         # Set text buffer
         self.bbody = GtkSource.Buffer()
         self.bbody.begin_not_undoable_action()
+        # add note body to buffer 
+        # searching for URLs and adding tags accordlying
         self.bbody.set_text(self.note.body)
+        # adding markdown syntax highlight
+        language_manager = GtkSource.LanguageManager()
+        self.bbody.set_language(language_manager.get_language('markdown'))
+        
         self.bbody.set_highlight_matching_brackets(False)
         self.bbody.end_not_undoable_action()
         self.txtNote.set_buffer(self.bbody)
+        # we need this to change cursor pointer on mouse over links
         self.txtNote.connect('motion-notify-event',self.motion_event)
         # Make resize work
         self.winMain.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
